@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Search, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Search, Image as ImageIcon, Loader2, AlertCircle } from "lucide-react";
 import DriveDetailModal from "../components/DriveDetailModal";
 
 export default function DriveFolder() {
@@ -8,17 +8,17 @@ export default function DriveFolder() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<any>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (folderId) {
-      fetchImages(folderId);
-    }
+    fetchImages(folderId);
   }, []);
 
   const fetchImages = async (id: string) => {
     setLoading(true);
     setSearched(true);
     setImages([]);
+    setErrorMsg(null);
 
     try {
       const res = await fetch(`/api/drive/files?folderId=${id}`);
@@ -26,10 +26,12 @@ export default function DriveFolder() {
         const data = await res.json();
         setImages(data);
       } else {
+        const errData = await res.json().catch(() => null);
+        setErrorMsg(errData?.error || "Lỗi không xác định từ máy chủ.");
         console.error("Failed to fetch drive files");
-        setImages([]);
       }
-    } catch (error) {
+    } catch (error: any) {
+      setErrorMsg("Lỗi kết nối đến máy chủ.");
       console.error("Error fetching drive files:", error);
     } finally {
       setLoading(false);
@@ -41,6 +43,15 @@ export default function DriveFolder() {
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+        </div>
+      ) : errorMsg ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-red-500">
+          <AlertCircle size={48} className="mb-4" />
+          <h3 className="text-xl font-medium mb-2">Đã xảy ra lỗi</h3>
+          <p className="text-center max-w-md">{errorMsg}</p>
+          <p className="text-center max-w-md mt-4 text-sm text-gray-500 dark:text-gray-400">
+            Hãy kiểm tra lại biến môi trường trên Render hoặc quyền truy cập của thư mục Google Drive.
+          </p>
         </div>
       ) : searched && images.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400">

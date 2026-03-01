@@ -19,36 +19,23 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 
 // Danh sách các tài khoản Google Drive để gộp dung lượng
 const DRIVE_ACCOUNTS = [
- 
   {
     folderId: process.env.DRIVE_FOLDER_ID_1 || "",
     refreshToken: process.env.DRIVE_REFRESH_TOKEN_1 || ""
   },
-
   {
     folderId: process.env.DRIVE_FOLDER_ID_2 || "",
     refreshToken: process.env.DRIVE_REFRESH_TOKEN_2 || ""
   },
-
   {
     folderId: process.env.DRIVE_FOLDER_ID_3 || "",
     refreshToken: process.env.DRIVE_REFRESH_TOKEN_3 || ""
   },
-
   {
     folderId: process.env.DRIVE_FOLDER_ID_4 || "",
     refreshToken: process.env.DRIVE_REFRESH_TOKEN_4 || ""
-  },
-
-
-   
-
-  // Bạn có thể copy block trên và dán xuống dưới đây để thêm tài khoản thứ 2, thứ 3...
-  // {
-  //   folderId: "ID_THU_MUC_CUA_TAI_KHOAN_2",
-  //   refreshToken: "REFRESH_TOKEN_CUA_TAI_KHOAN_2"
-  // }
-];
+  }
+].filter(account => account.folderId !== "" && account.refreshToken !== "");
 
 // ==========================================
 // DATABASE SETUP
@@ -176,6 +163,11 @@ app.post("/api/media", upload.single("file"), async (req, res) => {
     let driveFileId = null;
     let uploadSuccess = false;
     let lastError = null;
+
+    if (DRIVE_ACCOUNTS.length === 0) {
+      log("No Google Drive accounts configured.");
+      return res.status(500).json({ error: "Chưa cấu hình tài khoản Google Drive (Thiếu biến môi trường)." });
+    }
 
     // Start from the current known good account index
     for (let i = currentAccountIndex; i < DRIVE_ACCOUNTS.length; i++) {
@@ -328,6 +320,9 @@ app.get("/api/media", (req, res) => {
 // Get media file (stream from Drive)
 app.get("/api/media/:id/file", async (req, res) => {
   try {
+    if (DRIVE_ACCOUNTS.length === 0) {
+      return res.status(500).json({ error: "Chưa cấu hình tài khoản Google Drive (Thiếu biến môi trường)." });
+    }
     const media = db.prepare("SELECT * FROM media WHERE id = ?").get(req.params.id) as any;
     if (!media) return res.status(404).json({ error: "Media not found" });
 
@@ -395,6 +390,9 @@ app.get("/api/media/:id/file", async (req, res) => {
 // Delete media
 app.delete("/api/media/:id", async (req, res) => {
   try {
+    if (DRIVE_ACCOUNTS.length === 0) {
+      return res.status(500).json({ error: "Chưa cấu hình tài khoản Google Drive (Thiếu biến môi trường)." });
+    }
     const media = db.prepare("SELECT * FROM media WHERE id = ?").get(req.params.id) as any;
     if (!media) return res.status(404).json({ error: "Media not found" });
 
@@ -468,11 +466,14 @@ app.put("/api/media/:id/album", (req, res) => {
   }
 });
 
-// Sync from Drive
-app.post("/api/sync", async (req, res) => {
+async function syncFromDrive() {
+  if (DRIVE_ACCOUNTS.length === 0) {
+    console.log("Auto-sync skipped: No Google Drive accounts configured.");
+    return 0;
+  }
+  let syncedCount = 0;
+  console.log("Starting background sync from Google Drive...");
   try {
-    let syncedCount = 0;
-    
     for (const account of DRIVE_ACCOUNTS) {
       const drive = getDriveClient(account.refreshToken);
       let pageToken = undefined;
@@ -511,6 +512,21 @@ app.post("/api/sync", async (req, res) => {
       } while (pageToken);
     }
     
+    console.log(`Background sync complete. Added ${syncedCount} new files.`);
+    return syncedCount;
+  } catch (error) {
+    console.error("Background sync error:", error);
+    throw error;
+  }
+}
+
+// Sync from Drive
+app.post("/api/sync", async (req, res) => {
+  try {
+    if (DRIVE_ACCOUNTS.length === 0) {
+      return res.status(500).json({ error: "Chưa cấu hình tài khoản Google Drive (Thiếu biến môi trường)." });
+    }
+    const syncedCount = await syncFromDrive();
     res.json({ success: true, syncedCount });
   } catch (error) {
     console.error("Sync error:", error);
@@ -524,6 +540,9 @@ app.get("/api/drive/files", async (req, res) => {
   if (!folderId) return res.status(400).json({ error: "Folder ID is required" });
 
   try {
+    if (DRIVE_ACCOUNTS.length === 0) {
+      return res.status(500).json({ error: "Chưa cấu hình tài khoản Google Drive (Thiếu biến môi trường)." });
+    }
     // Use the first account to list files (assuming it has access)
     const account = DRIVE_ACCOUNTS[0];
     const drive = getDriveClient(account.refreshToken);
@@ -547,6 +566,9 @@ app.get("/api/drive/stream/:fileId", async (req, res) => {
   const { download } = req.query;
 
   try {
+    if (DRIVE_ACCOUNTS.length === 0) {
+      return res.status(500).json({ error: "Chưa cấu hình tài khoản Google Drive (Thiếu biến môi trường)." });
+    }
     let driveRes: any = null;
     
     // Try to find the file using any available account
@@ -618,6 +640,14 @@ async function startServer() {
   const PORT = process.env.PORT || 3000;
   app.listen(Number(PORT), "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
+    
+    // Run initial sync in the background
+    syncFromDrive().catch(console.error);
+    
+    // Run sync every 15 minutes (900000 ms)
+    setInterval(() => {
+      syncFromDrive().catch(console.error);
+    }, 15 * 60 * 1000);
   });
 }
 
